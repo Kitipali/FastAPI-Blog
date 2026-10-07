@@ -29,7 +29,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, clas
 # class_=Session -> le dice a sessionmaker qué clase debe utilizar para fabricar las sesiones.
 # después haremos:
     # db = Sessionlocal() ->se crea una sesión y la pregunta será: de que clase es db? -> class_=Session
-# autoflush=False -> No envía cambios hasta hacer el commit
+# autoflush=False -> SQLAlchemy no hace flush automáticamente antes de determinadas consultas.
 
 
 # DeclarativeBase -> Hace que SQLAlchemy pueda reconocer las clases que heredan de Base como 
