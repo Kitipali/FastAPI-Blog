@@ -1,12 +1,14 @@
 # Vamos a crear nuestras funciones para poder acceder a ellas a través del router
 
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 from math import ceil
 from typing import Optional, List, Tuple
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload, joinedload
-from app.models import PostORM, AuthorORM, TagORM
+from app.core.security import get_current_user
+from app.models import PostORM, TagORM, User
+from app.utils.slugify_utils import ensure_unique_slug, slugify_base
 # Para Python, app.models se refiere al paquete models, y 
 # lo que ese paquete expone directamente viene de su __init__.py.
 class PostRepository:
@@ -16,6 +18,12 @@ class PostRepository:
     def get(self, post_id:int)  -> Optional[PostORM]: # quiero devolver un PostORM
         post_find= select(PostORM).where(PostORM.id == post_id)
         return self.db.execute(post_find).scalar_one_or_none() # Obtenemos el valor de un solo post
+    
+    def get_by_slug(self, slug:str) -> Optional[PostORM]:
+        query = (
+            select(PostORM).where(PostORM.slug == slug)
+        )
+        return self.db.execute(query).scalar_one_or_none()
     
     def search(self,
             query: Optional[str], 
@@ -69,8 +77,8 @@ class PostRepository:
         post_list = (
             select(PostORM) # quiero seleccionar objetos PostORM
             .options( # Cómo quiero rcargar las relaciones de cada post
-                selectinload(PostORM.tags), # consulata1: dame los post, consulta2: dame sus tags
-                joinedload(PostORM.author), # carga author junto con el post mediante JOIN
+                selectinload(PostORM.tags), # consulta1: dame los post, consulta2: dame sus tags
+                joinedload(PostORM.user), # carga author junto con el post mediante JOIN
             )
             .where(PostORM.tags.any(func.lower(TagORM.name).in_(normalized_tag_names)))
             #any -> Selecciona los posts que tengan al menos un tag cuyo nombre, 
@@ -79,27 +87,22 @@ class PostRepository:
         )
         return self.db.execute(post_list).scalars().all()
         
-    def ensure_author(self, name: str, email: str)-> AuthorORM:
+    def ensure_author(self, name: str, email: str)-> User | None:
         
         author_obj =self.db.execute(
-            select(AuthorORM).where(AuthorORM.email == email)
-        # Busca en la BD: ¿Ya existe un autor cuyo email sea el que acaba de llegar?
+            select(User).where(User.email == email)
+            # Busca en la tabla users un usuario cuyo correo electrónico coincida con el proporcionado.
         ).scalar_one_or_none() # Da el AuthorORM o un None
-        if author_obj: # si está el author_object
-            return author_obj
-        # si no está el autor de la búsqueda author_obj -> Lo creamos
-        author_obj = AuthorORM(name=name, 
-                                email=email)# la crea
-        self.db.add(author_obj) # la añade en la BD
-        self.db.flush() # Envía los cambios pendientes a la BD sin confirmar todavía la transacción. Falta el commit. Aseguramos el ID
-    # cuando llega un nuevo post con un autor, comprobar si ese autor ya existe y, si no existe, crearlo.    
+    
         return author_obj  
     def ensure_tag(self, name: str) -> TagORM:
 
+        normalized = name.strip().lower()
         # con el objeto post de Postcreate creamos un objeto ORM
         tag_obj = self.db.execute(
-            select(TagORM).where(TagORM.name.ilike(name))
+            select(TagORM).where(func.lower(TagORM.name) == normalized)
         ).scalar_one_or_none()
+        # select(TagORM).where(TagORM.name.ilike(name)) -> Para postgre
         # Busca en tagORM un TagORM con el mismo nombre que name  y lo selecciona
         # trae algo o nada
         if tag_obj:
@@ -117,14 +120,25 @@ class PostRepository:
         # este new_post
         # Recordar: Habíamos definido relationship entre tags y post_tags
         
-    def create_post(self, title: str, content: str, author: Optional[dict], tags: List[dict]) ->PostORM :
+    def create_post(self, title: str, content: str,  tags: List[dict], image_url: Optional[str], category_id: Optional[int], author: User = Depends(get_current_user)) ->PostORM :
         author_obj = None
         if author:
-            author_obj = self.ensure_author(author['username'], author['email']) # username porque author viene de user que tiene username no name
-        post = PostORM(title= title, content= content, author= author_obj)
+            author_obj = self.ensure_author(
+                author.full_name, author.email) # username porque author viene de user que tiene username no name
+
         
-        for tag in tags: # accedo a cada uno de los diccionarios
-            tag_obj = self.ensure_tag(tag['name'])
+        unique_slug = ensure_unique_slug(self.db, title)
+        
+        post = PostORM(title= title, slug= unique_slug, content= content,
+                       image_url=image_url,user= author_obj, category_id= category_id)
+        
+    
+        names = tags[0]["name"].split(",")
+        for name in names: 
+            name = name.strip().lower()
+            if not name:
+                continue     
+            tag_obj = self.ensure_tag(name)
             post.tags.append(tag_obj)
             # en PostORM (carpeta models) tags es uno de los atributos
             # añadimos tag_obj a esa lista (tagas estaba definido como lista - List(TargORM))

@@ -1,12 +1,13 @@
 from math import ceil
-from fastapi import APIRouter, Query, Depends, Path, HTTPException, status
+from fastapi import APIRouter, Query, Depends, Path, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from typing import List, Optional, Literal, Union
+from typing import List, Optional, Literal, Union, Annotated
 from app.core.db import get_db
 from .schemas import (PostPublic, PaginatedPost, PostCreate, PostUpdate, PostSummary)
 from .repository import PostRepository
 from app.core.security import oauth2_scheme, get_current_user
+from app.services.file_storage import save_uploaded_image
 import time
 import asyncio
 import threading
@@ -27,7 +28,7 @@ router = APIRouter(prefix="/posts", tags=["posts"])
 #     return{"message": "Función asíncrona terminó"}
      
 # # tags-> para la documentación para que lo englobe todo en un mismo bloque
-# @router.get("", response_model=PaginatedPost)
+@router.get("", response_model=PaginatedPost)
 # "" -> vacío porque aquí va el prefix
 
 def list_posts(
@@ -143,7 +144,7 @@ def get_post(post_id: int = Path(
 # Método Post
 @router.post("", response_model=PostPublic, response_description= "Post creado (OK)", status_code= status.HTTP_201_CREATED)
 # Porque PostPublic es el que tiene id + title + content
-def create_posts(post: PostCreate, db: Session = Depends(get_db), user=Depends(get_current_user)): # PostCreate es la clase de Pydantic    
+def create_posts(post: Annotated[PostCreate, Depends(PostCreate.as_form)], image: Optional[UploadFile]=File(None), db: Session = Depends(get_db), user=Depends(get_current_user)): # PostCreate es la clase de Pydantic    
     # Para ejecutar create_post, necesito una sesión de base de datos. FastAPI, consíguemela utilizando get_db()
     # db -> nombre de la variable que vas a utilizar dentro del endpoint
     # Session -> el tipo de variable -> Objeto Session de SQLAlchemy
@@ -152,15 +153,28 @@ def create_posts(post: PostCreate, db: Session = Depends(get_db), user=Depends(g
     # db   → viene DE DENTRO, FastAPI lo obtiene con Depends()
     # user=Depends(get_current_user) -> le decimos al endpoint que tb debe resolver el get_current_user
     # es decir el usuario tiene que estar logueado -> Hemos protegido el endpoint
+    # FastAPI ejecuta PostCreate.as_form como dependencia.
+    # Obtiene title, content y tags del formulario HTTP,
+    # construye un objeto PostCreate y lo asigna a post.
+    # Swagger muestra los campos gracias a Form().
+        #Annotated[
+        #PostCreate,                  ← tipo de dato que recibirá post
+        #Depends(PostCreate.as_form)]  ← cómo obtiene FastAPI ese dato
     repository = PostRepository(db)
+    saved = None
           
    
     try:
+        if image is not None:
+            saved = save_uploaded_image(image)
+        image_url = saved["url"] if saved else None
         post= repository.create_post( # Ahora post es un objeto PostORM, no un objeto Pydantic. Reutilizamos la variable
             title=post.title,
             content=post.content,
             author= user, # recordar que user = FAKE_USERS.get(form_data.username)
-            tags= [tag.model_dump() for tag in post.tags] # convierto en diccionario cada uno de los tags y guardo en lista      
+            category_id=post.category_id,
+            tags= [tag.model_dump() for tag in post.tags], # convierto en diccionario cada uno de los tags y guardo en lista      
+            image_url=image_url
         )
         db.commit() # guardamos el cambio en la BD -> Se guardan todos los valores a los que le hicimos flush()
         db.refresh(post) 
@@ -223,6 +237,8 @@ def delete_post(post_id:int, db: Session = Depends(get_db), user=Depends(get_cur
     except SQLAlchemyError: # si hay un error de SQLAlchemy
         db.rollback() # deshaz toda la operación
         raise HTTPException(status_code=500, detail="Error al eliminar el post") # notificamos el error
+ 
+ 
         
  
 @router.get("/secure")                   
@@ -232,7 +248,16 @@ def secure_endpoint(token: str = Depends(oauth2_scheme)):
     # mete el resultado en la variable token
     return {"message":"Acceso con token", "token_recibido": token}
     
-    
+@router.get("/post/{slug}", response_model=Union[PostPublic, PostSummary])  
+def get_post_by_slug(slug: str, include_content: bool = Query(default =True, description = "Incluir o no el contenido?"), db: Session = Depends(get_db)):
+    repository = PostRepository(db)
+    post = repository.get_by_slug(slug)
+    if not post:
+        raise HTTPException(404, "Post no encontrado")
+    if include_content:
+        return PostPublic. model_validate(post, from_attributes=True)
+    return PostSummary.model_validate(post, from_attributes=True)
+        
     
     
     

@@ -9,8 +9,12 @@ from sqlalchemy.orm import  Mapped, mapped_column, relationship
 from app.core.db import Base
 
 if TYPE_CHECKING:
-    from .author import AuthorORM
+    from .user import User
     from .tag import TagORM
+    from .category import  CategoryORM
+# TYPE_CHECKING es una constante del módulo typing que permite importar clases únicamente
+# para comprobar tipos, sin ejecutar esas importaciones cuando funciona el programa.
+    
 
 
 post_tags = Table(
@@ -44,7 +48,15 @@ class PostORM(Base): # Nuestra primera tabla
     # SQLAlchemy normalmente lanza IntegrityError
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(100), nullable= False, index=True)
+    slug: Mapped[str] = mapped_column(String(160), unique=True, index= True)
     content: Mapped[str] = mapped_column(Text,nullable= False) # contenido del post puede ser mucho más largo y no quieres limitarlo a 100 caracteres. No puede ser Null
+    image_url= mapped_column(String(300), nullable=True)
+    # Crea conceptualmente una nueva columna
+    # Lo que se guarda en PostgreSQL NO es la imagen sino una cadena de texto
+    # por ejemplo /media/a83f.jpeg 
+    # mientras que el real está en  app/media/a83f.jpeg
+    # gracias a que en main.py hicimos -> app.mount("/media", StaticFiles(directory= MEDIA_DIR), name="media")
+    # nullable=True -> Puede haber post sin imagen
     created_at: Mapped[datetime] = mapped_column(DateTime, default= datetime.utcnow)
     
     
@@ -56,13 +68,22 @@ class PostORM(Base): # Nuestra primera tabla
         # index=True -> crea un índice
     # Mapped -> Propiedad con tipo
     # mapped_column -> configurador
-    author_id: Mapped[Optional[int]] = mapped_column(ForeignKey("authors.id"))
-    # ForeignKey("authors.id") -> El valor almacenado en posts.author_id hace referencia a authors.id
-    # se crea una columna real de author_id en la tabla osts y tiene un ForeignKey en authors.id
-    author: Mapped[Optional["AuthorORM"]] = relationship(back_populates="posts")
-    # author no es otra columna de la tabla. Es una relación ORM que te permite trabajar cómodamente
-    # Podemos hacer posts.author.name aunque no exista la columna author en posts.
-    # Relación 1(autor) a muchos n(posts)
+    
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    # ForeignKey("users.id") -> El valor almacenado en posts.users_id hace referencia a users.id
+    # se crea una columna real de users_id en la tabla posts y tiene un ForeignKey en users.id
+    user: Mapped[Optional["User"]] = relationship(back_populates="posts")
+    # user no es otra columna de la tabla. Es una relación ORM que te permite trabajar cómodamente
+    # Podemos hacer posts.users.name aunque no exista la columna author en posts.
+    # Relación 1(user) a muchos n(posts)
+    
+    category_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
+    # ondelete="SET NULL" -> Significa que, si se elimina una categoría, la base de datos
+    # debe poner category_id = NULL en los posts asociados, en lugar de eliminarlos.
+    
+    category = relationship("CategoryORM", back_populates="posts")
+    
     tags: Mapped[List["TagORM"]] = relationship(
         secondary=post_tags, # Para relacionar PostORM con TagORM, utiliza post_tags como tabla intermedia
         back_populates="posts", # se refiere al atributo del otro lado -> tag.posts -> todos los post c/ ese tag

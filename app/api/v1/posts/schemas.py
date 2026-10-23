@@ -5,8 +5,12 @@
         # PostUpdate
         # PostSummary...
 
-from typing import Optional, List, Union, Literal
+from typing import Optional, List, Union, Literal, Annotated
 from pydantic import BaseModel, Field, field_validator, EmailStr, ConfigDict
+from fastapi import Form
+
+from app.api.v1.auth.schemas import UserPublic
+from app.api.v1.categories.schemas import CategoryPublic
 
 
     
@@ -39,12 +43,14 @@ class PostBase(BaseModel):
     # Porque una lista es mutable: puedes modificarla después de crearla. Y 
     # si varios objetos compartieran accidentalmente la misma lista, 
     # modificar la lista de uno modificaría también la del otro.
-    author:Optional[Author] = None
+    user:Optional[UserPublic] = None
+    image_url: Optional[str] = None
+    category: Optional[CategoryPublic] = None
     
     model_config = ConfigDict(from_attributes=True) 
         # Esta validación va a aceptar ORM. Si no lo ponemos, únicamente va a aceptar diccionarios
     
-class PostCreate(PostBase): # validará las creaciones de posts y hereda de BaseModel
+class PostCreate(BaseModel): # validará las creaciones de posts y hereda de BaseModel
     title: str = Field(
         ...,
         min_length=3,
@@ -58,6 +64,7 @@ class PostCreate(PostBase): # validará las creaciones de posts y hereda de Base
         description="Contenido del post (mínimo 10 caracteres)",
         examples=["Este es un contenido válido porque tiene 10 caracteres o más"]
     )
+    category_id: Optional[int]
     tags: List[Tag]= Field(default_factory=list)#[]
     # tags debe ser una lista de objetos Tag y, 
     # si el usuario no proporciona tags, Pydantic crea una lista vacía nueva [].
@@ -82,6 +89,20 @@ class PostCreate(PostBase): # validará las creaciones de posts y hereda de Base
         if "spam" in value.lower():
             raise ValueError("El título no puede contener la palabra: 'spam'")
         return value
+    @classmethod
+    def as_form(
+        cls,
+        title: Annotated[str, Form(min_length=3)], 
+        # str recibido como campo de formulario; mínimo 3 caracteres
+        content: Annotated[str, Form(min_length=10)],
+        category_id: Annotated[int, Form(ge=1)],
+        tags: Annotated[Optional[List[str]], Form()] = None, 
+        
+    ):
+        tag_objs = [Tag(name=t) for t in (tags or [])]
+        return cls(title=title, content= content, category_id= category_id,tags=tag_objs)
+        # Con los valores recibidos construye el postcreate`
+        
     
 class PostUpdate(BaseModel):# validará las actualizaciones de posts y hereda de BaseModel
     title: Optional[str] = Field(None, min_length=3, max_length=100)
@@ -93,6 +114,7 @@ class PostPublic(PostBase):
     # Clase que hereda de PostBase donde hay title y content es opcional y predefinido
     # Por lo tanto no es necesario definir title y content
     id: int
+    slug: str
     model_config= ConfigDict(from_attributes=True)
     # Config_Dict viene de Pydantic
     # Permite a Pydantic construir PostPublic leyendo atributos

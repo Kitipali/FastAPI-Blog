@@ -15,7 +15,7 @@ if DATABASE_URL.startswith("sqlite"):
     engine_kwargs["connect_args"]={"check_same_thread": False} # configuración específica  de sql lite
 #Comprueba si la base de datos es SQLite
 
-engine = create_engine(DATABASE_URL, echo=True, future=True, **engine_kwargs)
+engine = create_engine(DATABASE_URL, echo=False, future=True, **engine_kwargs)
 # Creamos una conexión
 # el motor de SQLAlchemy: el objeto que sabe dónde está mi base de datos y cómo debo comunicarme con ella
 # echo=True -> para ver en terminal qué comandos sql se están ejecutando
